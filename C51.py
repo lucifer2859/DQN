@@ -13,7 +13,6 @@ from common.replay_buffer import ReplayBuffer
 
 from IPython.display import clear_output
 import matplotlib.pyplot as plt
-%matplotlib inline
 
 ### Use Cuda ###
 USE_CUDA = torch.cuda.is_available()
