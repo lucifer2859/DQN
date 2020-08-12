@@ -1,4 +1,4 @@
-import math, random
+import math, random, os
 
 import gym
 import numpy as np
@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.autograd as autograd 
+from torch.autograd import Variable
 import torch.nn.functional as F
 
 from common.layers import NoisyLinear
@@ -14,11 +14,10 @@ from common.replay_buffer import ReplayBuffer
 
 from IPython.display import clear_output
 import matplotlib.pyplot as plt
-%matplotlib inline
 
 ### Use Cuda ###
-USE_CUDA = torch.cuda.is_available()
-Variable = lambda *args, **kwargs: autograd.Variable(*args, **kwargs).cuda() if USE_CUDA else autograd.Variable(*args, **kwargs)
+device = "cuda:1"
+
 
 ### Cart Pole Environment ###
 env_id = "CartPole-v0"
@@ -53,7 +52,8 @@ class QRDQN(nn.Module):
         
     def act(self, state, epsilon):
         if random.random() > epsilon:
-            state = Variable(torch.FloatTensor(np.array(state, dtype=np.float32)).unsqueeze(0), volatile=True)
+            with torch.no_grad():
+                state = Variable(torch.FloatTensor(np.array(state, dtype=np.float32)).unsqueeze(0)).to(device)
             q_values = self.forward(state).mean(2)
             action = q_values.max(1)[1]
             action = action.data.cpu().numpy()[0]
@@ -66,21 +66,19 @@ def projection_distribution(dist, next_state, reward, done):
     next_dist = target_model(next_state)
     next_action = next_dist.mean(2).max(1)[1]
     next_action = next_action.unsqueeze(1).unsqueeze(1).expand(batch_size, 1, num_quant)
-    next_dist = next_dist.gather(1, next_action).squeeze(1).cpu().data
+    next_dist = next_dist.gather(1, next_action).squeeze(1)
 
     expected_quant = reward.unsqueeze(1) + 0.99 * next_dist * (1 - done.unsqueeze(1))
-    expected_quant = Variable(expected_quant)
 
     '''
     torch.sort():
-    	A tuple of (sorted_tensor, sorted_indices) is returned, where the
-    	sorted_indices are the indices of the elements in the original input tensor.
+        A tuple of (sorted_tensor, sorted_indices) is returned, where the
+        sorted_indices are the indices of the elements in the original input tensor.
     '''
     quant_idx = torch.sort(dist, 1, descending=False)[1]
 
     tau_hat = torch.linspace(0.0, 1.0 - 1. / num_quant, num_quant) + 0.5 / num_quant
-    tau_hat = tau_hat.unsqueeze(0).repeat(batch_size, 1)
-    quant_idx = quant_idx.cpu().data
+    tau_hat = tau_hat.unsqueeze(0).repeat(batch_size, 1).to(device)
     batch_idx = np.arange(batch_size)
     tau = tau_hat[:, quant_idx][batch_idx, batch_idx]
         
@@ -90,12 +88,8 @@ num_quant = 51
 Vmin = -10
 Vmax = 10
 
-current_model = QRDQN(env.observation_space.shape[0], env.action_space.n, num_quant)
-target_model  = QRDQN(env.observation_space.shape[0], env.action_space.n, num_quant)
-
-if USE_CUDA:
-    current_model = current_model.cuda()
-    target_model  = target_model.cuda()
+current_model = QRDQN(env.observation_space.shape[0], env.action_space.n, num_quant).to(device)
+target_model  = QRDQN(env.observation_space.shape[0], env.action_space.n, num_quant).to(device)
     
 optimizer = optim.Adam(current_model.parameters())
 
@@ -110,11 +104,12 @@ update_target(current_model, target_model)
 def compute_td_loss(batch_size):
     state, action, reward, next_state, done = replay_buffer.sample(batch_size) 
 
-    state      = Variable(torch.FloatTensor(np.float32(state)))
-    next_state = Variable(torch.FloatTensor(np.float32(next_state)), volatile=True)
-    action     = Variable(torch.LongTensor(action))
-    reward     = torch.FloatTensor(reward)
-    done       = torch.FloatTensor(np.float32(done))
+    state = Variable(torch.FloatTensor(np.float32(state))).to(device)
+    with torch.no_grad():
+        next_state = Variable(torch.FloatTensor(np.float32(next_state))).to(device)
+    action = Variable(torch.LongTensor(action)).to(device)
+    reward = torch.FloatTensor(reward).to(device)
+    done = torch.FloatTensor(np.float32(done)).to(device)
 
     dist = current_model(state)
     action = action.unsqueeze(1).unsqueeze(1).expand(batch_size, 1, num_quant)
@@ -132,12 +127,12 @@ def compute_td_loss(batch_size):
         
     optimizer.zero_grad()
     loss.backward()
-    nn.utils.clip_grad_norm(current_model.parameters(), 0.5)
+    nn.utils.clip_grad_norm_(current_model.parameters(), 0.5)
     optimizer.step()
     
     return loss
 
-def plot(frame_idx, rewards, losses):
+def CartPole_plot(frame_idx, rewards, losses):
     clear_output(True)
     plt.figure(figsize=(20,5))
     plt.subplot(131)
@@ -146,9 +141,12 @@ def plot(frame_idx, rewards, losses):
     plt.subplot(132)
     plt.title('loss')
     plt.plot(losses)
-    plt.show()
+    plt.savefig('img/QR_DQL_CartPole_%s.png' % (frame_idx))
+    plt.cla()
+    plt.close("all")
 
-### Training ###
+
+### Training CartPole ###
 epsilon_start = 1.0
 epsilon_final = 0.01
 epsilon_decay = 500
@@ -180,13 +178,16 @@ for frame_idx in range(1, num_frames + 1):
         
     if len(replay_buffer) > batch_size:
         loss = compute_td_loss(batch_size)
-        losses.append(loss.data[0])
+        losses.append(loss.item())
         
     if frame_idx % 200 == 0:
-        plot(frame_idx, all_rewards, losses)
+        CartPole_plot(frame_idx, all_rewards, losses)
+        if frame_idx > 200:
+            os.system('rm img/QR_DQL_CartPole_%s.png' % (frame_idx - 200))
         
     if frame_idx % 1000 == 0:
         update_target(current_model, target_model)
+
 
 ### Atari Environment ###
 from common.wrappers import make_atari, wrap_deepmind, wrap_pytorch
@@ -231,11 +232,12 @@ class QRCnnDQN(nn.Module):
         return x
         
     def feature_size(self):
-        return self.features(autograd.Variable(torch.zeros(1, *self.input_shape))).view(1, -1).size(1)
+        return self.features(Variable(torch.zeros(1, *self.input_shape))).view(1, -1).size(1)
         
     def act(self, state, epsilon):
         if random.random() > epsilon:
-            state = Variable(torch.FloatTensor(np.array(state, dtype=np.float32)).unsqueeze(0), volatile=True)
+            with torch.no_grad():
+                state = Variable(torch.FloatTensor(np.array(state, dtype=np.float32)).unsqueeze(0)).to(device)
             q_values = self.forward(state).mean(2)
             action = q_values.max(1)[1]
             action = action.data.cpu().numpy()[0]
@@ -244,16 +246,25 @@ class QRCnnDQN(nn.Module):
 
         return action
 
+def Atari_plot(frame_idx, rewards, losses):
+    clear_output(True)
+    plt.figure(figsize=(20,5))
+    plt.subplot(131)
+    plt.title('frame %s. reward: %s' % (frame_idx, np.mean(rewards[-10:])))
+    plt.plot(rewards)
+    plt.subplot(132)
+    plt.title('loss')
+    plt.plot(losses)
+    plt.savefig('img/QR_DQL_Atari_%s.png' % (frame_idx))
+    plt.cla()
+    plt.close("all")
+
 num_quant = 51
 Vmin = -10
 Vmax = 10
 
-current_model = QRCnnDQN(env.observation_space.shape, env.action_space.n, num_quant)
-target_model  = QRCnnDQN(env.observation_space.shape, env.action_space.n, num_quant)
-
-if USE_CUDA:
-    current_model = current_model.cuda()
-    target_model  = target_model.cuda()
+current_model = QRCnnDQN(env.observation_space.shape, env.action_space.n, num_quant).to(device)
+target_model  = QRCnnDQN(env.observation_space.shape, env.action_space.n, num_quant).to(device)
     
 update_target(current_model, target_model)
     
@@ -268,6 +279,8 @@ epsilon_decay = 30000
 
 epsilon_by_frame = lambda frame_idx: epsilon_final + (epsilon_start - epsilon_final) * math.exp(-1. * frame_idx / epsilon_decay)
 
+
+### Training Atari ###
 num_frames = 1000000
 batch_size = 32
 gamma = 0.99
@@ -293,10 +306,12 @@ for frame_idx in range(1, num_frames + 1):
         
     if len(replay_buffer) > replay_initial:
         loss = compute_td_loss(batch_size)
-        losses.append(loss.data[0])
+        losses.append(loss.item())
         
     if frame_idx % 10000 == 0:
-        plot(frame_idx, all_rewards, losses)
+        Atari_plot(frame_idx, all_rewards, losses)
+        if frame_idx > 10000:
+            os.system('rm img/QR_DQL_Atari_%s.png' % (frame_idx - 10000))
         
     if frame_idx % 1000 == 0:
         update_target(current_model, target_model)

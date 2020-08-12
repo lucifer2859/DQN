@@ -5,10 +5,9 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 class NoisyLinear(nn.Module):
-    def __init__(self, in_features, out_features, use_cuda, std_init=0.4):
+    def __init__(self, in_features, out_features, std_init=0.4):
         super(NoisyLinear, self).__init__()
         
-        self.use_cuda     = use_cuda
         self.in_features  = in_features
         self.out_features = out_features
         self.std_init     = std_init
@@ -25,16 +24,9 @@ class NoisyLinear(nn.Module):
         self.reset_noise()
     
     def forward(self, x):
-        if self.use_cuda:
-            weight_epsilon = self.weight_epsilon.cuda()
-            bias_epsilon   = self.bias_epsilon.cuda()
-        else:
-            weight_epsilon = self.weight_epsilon
-            bias_epsilon   = self.bias_epsilon
-            
         if self.training: 
-            weight = self.weight_mu + self.weight_sigma.mul(Variable(weight_epsilon))
-            bias   = self.bias_mu   + self.bias_sigma.mul(Variable(bias_epsilon))
+            weight = self.weight_mu + self.weight_sigma.mul(Variable(self.weight_epsilon))
+            bias   = self.bias_mu   + self.bias_sigma.mul(Variable(self.bias_epsilon))
         else:
             weight = self.weight_mu
             bias   = self.bias_mu

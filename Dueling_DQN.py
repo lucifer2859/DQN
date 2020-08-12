@@ -1,4 +1,4 @@
-import math, random
+import math, random, os
 
 import gym
 import numpy as np
@@ -6,16 +6,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.autograd as autograd 
+from torch.autograd import Variable
 import torch.nn.functional as F
 
 from IPython.display import clear_output
 import matplotlib.pyplot as plt
-%matplotlib inline
 
 ### Use Cuda ###
-USE_CUDA = torch.cuda.is_available()
-Variable = lambda *args, **kwargs: autograd.Variable(*args, **kwargs).cuda() if USE_CUDA else autograd.Variable(*args, **kwargs)
+device = "cuda:3"
 
 ### Replay Buffer ###
 from collections import deque
@@ -37,6 +35,7 @@ class ReplayBuffer(object):
     def __len__(self):
         return len(self.buffer)
 
+
 ### Cart Pole Environment ###
 env_id = "CartPole-v0"
 env = gym.make(env_id)
@@ -48,7 +47,7 @@ epsilon_decay = 500
 
 epsilon_by_frame = lambda frame_idx: epsilon_final + (epsilon_start - epsilon_final) * math.exp(-1. * frame_idx / epsilon_decay)
 
-plt.plot([epsilon_by_frame(i) for i in range(10000)])
+# plt.plot([epsilon_by_frame(i) for i in range(10000)])
 
 ### Dueling Deep Q Network ###
 class DuelingDQN(nn.Module):
@@ -80,19 +79,16 @@ class DuelingDQN(nn.Module):
     
     def act(self, state, epsilon):
         if random.random() > epsilon:
-            state = Variable(torch.FloatTensor(state).unsqueeze(0), volatile=True)
+            with torch.no_grad():
+                state = Variable(torch.FloatTensor(state).unsqueeze(0)).to(device)
             q_value = self.forward(state)
-            action = q_value.max(1)[1].data[0]
+            action = int(q_value.max(1)[1].data[0].cpu().int().numpy())
         else:
             action = random.randrange(env.action_space.n)
         return action
 
-current_model = DuelingDQN(env.observation_space.shape[0], env.action_space.n)
-target_model  = DuelingDQN(env.observation_space.shape[0], env.action_space.n)
-
-if USE_CUDA:
-    current_model = current_model.cuda()
-    target_model  = target_model.cuda()
+current_model = DuelingDQN(env.observation_space.shape[0], env.action_space.n).to(device)
+target_model  = DuelingDQN(env.observation_space.shape[0], env.action_space.n).to(device)
     
 optimizer = optim.Adam(current_model.parameters())
 
@@ -108,11 +104,11 @@ update_target(current_model, target_model)
 def compute_td_loss(batch_size):
     state, action, reward, next_state, done = replay_buffer.sample(batch_size)
 
-    state      = Variable(torch.FloatTensor(np.float32(state)))
-    next_state = Variable(torch.FloatTensor(np.float32(next_state)))
-    action     = Variable(torch.LongTensor(action))
-    reward     = Variable(torch.FloatTensor(reward))
-    done       = Variable(torch.FloatTensor(done))
+    state      = Variable(torch.FloatTensor(np.float32(state))).to(device)
+    next_state = Variable(torch.FloatTensor(np.float32(next_state))).to(device)
+    action     = Variable(torch.LongTensor(action)).to(device)
+    reward     = Variable(torch.FloatTensor(reward)).to(device)
+    done       = Variable(torch.FloatTensor(done)).to(device)
 
     q_values = current_model(state)
     next_q_values = target_model(next_state)
@@ -129,7 +125,7 @@ def compute_td_loss(batch_size):
     
     return loss
 
-def plot(frame_idx, rewards, losses):
+def CartPole_plot(frame_idx, rewards, losses):
     clear_output(True)
     plt.figure(figsize=(20,5))
     plt.subplot(131)
@@ -138,9 +134,12 @@ def plot(frame_idx, rewards, losses):
     plt.subplot(132)
     plt.title('loss')
     plt.plot(losses)
-    plt.show()
+    plt.savefig('img/Dueling_DQN_CartPole_%s.png' % (frame_idx))
+    plt.cla()
+    plt.close("all")
 
-### Training ###
+
+### Training CartPole ###
 num_frames = 10000
 batch_size = 32
 gamma = 0.99
@@ -167,13 +166,16 @@ for frame_idx in range(1, num_frames + 1):
         
     if len(replay_buffer) > batch_size:
         loss = compute_td_loss(batch_size)
-        losses.append(loss.data[0])
+        losses.append(loss.item())
         
     if frame_idx % 200 == 0:
-        plot(frame_idx, all_rewards, losses)
+        CartPole_plot(frame_idx, all_rewards, losses)
+        if frame_idx > 200:
+            os.system('rm img/Dueling_DQN_CartPole_%s.png' % (frame_idx - 200))
         
     if frame_idx % 100 == 0:
         update_target(current_model, target_model)
+
 
 ### Atari Environment ###
 from common.wrappers import make_atari, wrap_deepmind, wrap_pytorch
@@ -219,23 +221,33 @@ class DuelingCnnDQN(nn.Module):
         return value + advantage - advantage.mean()
     
     def feature_size(self):
-        return self.features(autograd.Variable(torch.zeros(1, *self.input_shape))).view(1, -1).size(1)
+        return self.features(Variable(torch.zeros(1, *self.input_shape))).view(1, -1).size(1)
     
     def act(self, state, epsilon):
         if random.random() > epsilon:
-            state = Variable(torch.FloatTensor(np.float32(state)).unsqueeze(0), volatile=True)
+            with torch.no_grad():
+                state = Variable(torch.FloatTensor(np.float32(state)).unsqueeze(0)).to(device)
             q_value = self.forward(state)
-            action = q_value.max(1)[1].data[0]
+            action = int(q_value.max(1)[1].data[0].cpu().int().numpy())
         else:
             action = random.randrange(env.action_space.n)
         return action
 
-current_model = DuelingCnnDQN(env.observation_space.shape, env.action_space.n)
-target_model  = DuelingCnnDQN(env.observation_space.shape, env.action_space.n)
+def Atari_plot(frame_idx, rewards, losses):
+    clear_output(True)
+    plt.figure(figsize=(20,5))
+    plt.subplot(131)
+    plt.title('frame %s. reward: %s' % (frame_idx, np.mean(rewards[-10:])))
+    plt.plot(rewards)
+    plt.subplot(132)
+    plt.title('loss')
+    plt.plot(losses)
+    plt.savefig('img/Dueling_DQN_Atari_%s.png' % (frame_idx))
+    plt.cla()
+    plt.close("all")
 
-if USE_CUDA:
-    current_model = current_model.cuda()
-    target_model  = target_model.cuda()
+current_model = DuelingCnnDQN(env.observation_space.shape, env.action_space.n).to(device)
+target_model  = DuelingCnnDQN(env.observation_space.shape, env.action_space.n).to(device)
     
 optimizer = optim.Adam(current_model.parameters(), lr=0.0001)
 
@@ -244,6 +256,8 @@ replay_buffer = ReplayBuffer(100000)
 
 update_target(current_model, target_model)
 
+
+### Training Atari ###
 num_frames = 1000000
 batch_size = 32
 gamma = 0.99
@@ -270,10 +284,12 @@ for frame_idx in range(1, num_frames + 1):
         
     if len(replay_buffer) > replay_initial:
         loss = compute_td_loss(batch_size)
-        losses.append(loss.data[0])
+        losses.append(loss.item())
         
     if frame_idx % 10000 == 0:
-        plot(frame_idx, all_rewards, losses)
+        Atari_plot(frame_idx, all_rewards, losses)
+        if frame_idx > 10000:
+            os.system('rm img/Dueling_DQN_Atari_%s.png' % (frame_idx - 10000))
         
     if frame_idx % 1000 == 0:
         update_target(current_model, target_model)

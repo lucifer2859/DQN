@@ -1,4 +1,4 @@
-import math, random
+import math, random, os
 
 import gym
 import numpy as np
@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.autograd as autograd 
+from torch.autograd import Variable
 import torch.nn.functional as F
 
 from common.replay_buffer import ReplayBuffer
@@ -15,8 +15,8 @@ from IPython.display import clear_output
 import matplotlib.pyplot as plt
 
 ### Use Cuda ###
-USE_CUDA = torch.cuda.is_available()
-Variable = lambda *args, **kwargs: autograd.Variable(*args, **kwargs).cuda() if USE_CUDA else autograd.Variable(*args, **kwargs)
+device = "cuda:1"
+
 
 ### Cart Pole Environment ###
 env_id = "CartPole-v0"
@@ -101,11 +101,12 @@ class CategoricalDQN(nn.Module):
         x = F.relu(self.linear2(x))
         x = F.relu(self.noisy1(x))
         x = self.noisy2(x)
-        x = F.softmax(x.view(-1, self.num_atoms)).view(-1, self.num_actions, self.num_atoms)
+        x = nn.Softmax(dim=1)(x.view(-1, self.num_atoms)).view(-1, self.num_actions, self.num_atoms)
         return x
     
     def act(self, state):
-        state = Variable(torch.FloatTensor(state).unsqueeze(0), volatile=True)
+        with torch.no_grad():
+            state = Variable(torch.FloatTensor(state).unsqueeze(0)).to(device)
         dist = self.forward(state).data.cpu()
         dist = dist * torch.linspace(Vmin, Vmax, num_atoms)
         action = dist.sum(2).max(1)[1].numpy()[0]
@@ -119,9 +120,9 @@ def projection_distribution(next_state, rewards, dones):
     batch_size = next_state.size(0)
     
     delta_z = float(Vmax - Vmin) / (num_atoms - 1)
-    support = torch.linspace(Vmin, Vmax, num_atoms)
+    support = torch.linspace(Vmin, Vmax, num_atoms).to(device)
     
-    next_dist = target_model(next_state).data.cpu() * support
+    next_dist = target_model(next_state) * support
     next_action = next_dist.sum(2).max(1)[1]
     next_action = next_action.unsqueeze(1).unsqueeze(1).expand(next_dist.size(0), 1, next_dist.size(2))
     next_dist = next_dist.gather(1, next_action).squeeze(1)
@@ -137,10 +138,10 @@ def projection_distribution(next_state, rewards, dones):
     u  = b.ceil().long()  # Upper bound
         
     offset = torch.linspace(0, (batch_size - 1) * num_atoms, batch_size).long()\
-                    .unsqueeze(1).expand(batch_size, num_atoms)
+                    .unsqueeze(1).expand(batch_size, num_atoms).to(device)
 
     # Equation (7)
-    proj_dist = torch.zeros(next_dist.size())    
+    proj_dist = torch.zeros(next_dist.size()).to(device)
     proj_dist.view(-1).index_add_(0, (l + offset).view(-1), (next_dist * (u.float() - b)).view(-1))
     proj_dist.view(-1).index_add_(0, (u + offset).view(-1), (next_dist * (b - l.float())).view(-1))
         
@@ -150,12 +151,8 @@ num_atoms = 51
 Vmin = -10
 Vmax = 10
 
-current_model = CategoricalDQN(env.observation_space.shape[0], env.action_space.n, num_atoms, Vmin, Vmax)
-target_model  = CategoricalDQN(env.observation_space.shape[0], env.action_space.n, num_atoms, Vmin, Vmax)
-
-if USE_CUDA:
-    current_model = current_model.cuda()
-    target_model  = target_model.cuda()
+current_model = CategoricalDQN(env.observation_space.shape[0], env.action_space.n, num_atoms, Vmin, Vmax).to(device)
+target_model  = CategoricalDQN(env.observation_space.shape[0], env.action_space.n, num_atoms, Vmin, Vmax).to(device)
     
 optimizer = optim.Adam(current_model.parameters())
 
@@ -172,11 +169,12 @@ update_target(current_model, target_model)
 def compute_td_loss(batch_size):
     state, action, reward, next_state, done = replay_buffer.sample(batch_size) 
 
-    state      = Variable(torch.FloatTensor(np.float32(state)))
-    next_state = Variable(torch.FloatTensor(np.float32(next_state)), volatile=True)
-    action     = Variable(torch.LongTensor(action))
-    reward     = torch.FloatTensor(reward)
-    done       = torch.FloatTensor(np.float32(done))
+    state = Variable(torch.FloatTensor(np.float32(state))).to(device)
+    with torch.no_grad():
+        next_state = Variable(torch.FloatTensor(np.float32(next_state))).to(device)
+    action = Variable(torch.LongTensor(action)).to(device)
+    reward = torch.FloatTensor(reward).to(device)
+    done = torch.FloatTensor(np.float32(done)).to(device)
 
     proj_dist = projection_distribution(next_state, reward, done)
     
@@ -184,7 +182,7 @@ def compute_td_loss(batch_size):
     action = action.unsqueeze(1).unsqueeze(1).expand(batch_size, 1, num_atoms)
     dist = dist.gather(1, action).squeeze(1)
     dist.data.clamp_(0.01, 0.99)
-    loss = - (Variable(proj_dist) * dist.log()).sum(1).mean()
+    loss = - (proj_dist * dist.log()).sum(1).mean()
         
     optimizer.zero_grad()
     loss.backward()
@@ -195,7 +193,7 @@ def compute_td_loss(batch_size):
     
     return loss
 
-def plot(frame_idx, rewards, losses):
+def CartPole_plot(frame_idx, rewards, losses):
     clear_output(True)
     plt.figure(figsize=(20,5))
     plt.subplot(131)
@@ -204,9 +202,12 @@ def plot(frame_idx, rewards, losses):
     plt.subplot(132)
     plt.title('loss')
     plt.plot(losses)
-    plt.show()
+    plt.savefig('img/C51_CartPole_%s.png' % (frame_idx))
+    plt.cla()
+    plt.close("all")
 
-### Train ###
+
+### Training CartPole ###
 num_frames = 10000
 batch_size = 32
 gamma = 0.99
@@ -232,13 +233,16 @@ for frame_idx in range(1, num_frames + 1):
         
     if len(replay_buffer) > batch_size:
         loss = compute_td_loss(batch_size)
-        losses.append(loss.data[0])
+        losses.append(loss.item())
         
     if frame_idx % 200 == 0:
-        plot(frame_idx, all_rewards, losses)
+        CartPole_plot(frame_idx, all_rewards, losses)
+        if frame_idx > 200:
+            os.system('rm img/C51_CartPole_%s.png' % (frame_idx - 200))
         
     if frame_idx % 100 == 0:
         update_target(current_model, target_model)
+
 
 ### Atari Environment ###
 from common.wrappers import make_atari, wrap_deepmind, wrap_pytorch
@@ -248,16 +252,74 @@ env = make_atari(env_id)
 env = wrap_deepmind(env)
 env = wrap_pytorch(env)
 
+class CategoricalCnnDQN(nn.Module):
+    def __init__(self, input_shape, num_actions, num_atoms, Vmin, Vmax):
+        super(CategoricalCnnDQN, self).__init__()
+        
+        self.input_shape  = input_shape
+        self.num_actions  = num_actions
+        self.num_atoms    = num_atoms
+        self.Vmin         = Vmin
+        self.Vmax         = Vmax
+        
+        self.features = nn.Sequential(
+            nn.Conv2d(input_shape[0], 32, kernel_size=8, stride=4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),
+            nn.ReLU()
+        )
+        
+        self.noisy1 = NoisyLinear(self.feature_size(), 512)
+        self.noisy2 = NoisyLinear(512, self.num_actions * self.num_atoms)
+        
+    def forward(self, x):
+        batch_size = x.size(0)
+        
+        x = x / 255.
+        x = self.features(x)
+        x = x.view(batch_size, -1)
+        
+        x = F.relu(self.noisy1(x))
+        x = self.noisy2(x)
+        x = nn.Softmax(dim=1)(x.view(-1, self.num_atoms)).view(-1, self.num_actions, self.num_atoms)
+        return x
+        
+    def reset_noise(self):
+        self.noisy1.reset_noise()
+        self.noisy2.reset_noise()
+        
+    def feature_size(self):
+        return self.features(Variable(torch.zeros(1, *self.input_shape))).view(1, -1).size(1)
+    
+    def act(self, state):
+        with torch.no_grad():
+            state = Variable(torch.FloatTensor(np.float32(state)).unsqueeze(0)).to(device)
+        dist = self.forward(state).data.cpu()
+        dist = dist * torch.linspace(Vmin, Vmax, num_atoms)
+        action = dist.sum(2).max(1)[1].numpy()[0]
+        return action
+
+def Atari_plot(frame_idx, rewards, losses):
+    clear_output(True)
+    plt.figure(figsize=(20,5))
+    plt.subplot(131)
+    plt.title('frame %s. reward: %s' % (frame_idx, np.mean(rewards[-10:])))
+    plt.plot(rewards)
+    plt.subplot(132)
+    plt.title('loss')
+    plt.plot(losses)
+    plt.savefig('img/C51_Atari_%s.png' % (frame_idx))
+    plt.cla()
+    plt.close("all")
+
 num_atoms = 51
 Vmin = -10
 Vmax = 10
 
-current_model = CategoricalCnnDQN(env.observation_space.shape, env.action_space.n, num_atoms, Vmin, Vmax)
-target_model  = CategoricalCnnDQN(env.observation_space.shape, env.action_space.n, num_atoms, Vmin, Vmax)
-
-if USE_CUDA:
-    current_model = current_model.cuda()
-    target_model  = target_model.cuda()
+current_model = CategoricalCnnDQN(env.observation_space.shape, env.action_space.n, num_atoms, Vmin, Vmax).to(device)
+target_model  = CategoricalCnnDQN(env.observation_space.shape, env.action_space.n, num_atoms, Vmin, Vmax).to(device)
     
 optimizer = optim.Adam(current_model.parameters(), 0.0001)
 update_target(current_model, target_model)
@@ -265,6 +327,8 @@ update_target(current_model, target_model)
 replay_initial = 10000
 replay_buffer = ReplayBuffer(100000)
 
+
+### Training Atari ###
 num_frames = 1000000
 batch_size = 32
 gamma = 0.99
@@ -290,10 +354,12 @@ for frame_idx in range(1, num_frames + 1):
         
     if len(replay_buffer) > replay_initial:
         loss = compute_td_loss(batch_size)
-        losses.append(loss.data[0])
+        losses.append(loss.item())
         
     if frame_idx % 10000 == 0:
-        plot(frame_idx, all_rewards, losses)
+        Atari_plot(frame_idx, all_rewards, losses)
+        if frame_idx > 10000:
+            os.system('rm img/C51_Atari_%s.png' % (frame_idx - 10000))
         
     if frame_idx % 1000 == 0:
         update_target(current_model, target_model)
