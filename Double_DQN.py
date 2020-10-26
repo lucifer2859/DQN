@@ -106,7 +106,7 @@ def compute_td_loss(batch_size):
     next_q_value = next_q_state_values.gather(1, torch.max(next_q_values, 1)[1].unsqueeze(1)).squeeze(1)
     expected_q_value = reward + gamma * next_q_value * (1 - done)
     
-    loss = (q_value - Variable(expected_q_value.data).to(device)).pow(2).mean()
+    loss = (q_value - expected_q_value.detach()).pow(2).mean()
         
     optimizer.zero_grad()
     loss.backward()
@@ -129,7 +129,7 @@ def CartPole_plot(frame_idx, rewards, losses):
 
 
 ### Training CartPole ###
-num_frames = 10000
+num_frames = 40000
 batch_size = 32
 gamma = 0.99
 
@@ -157,10 +157,10 @@ for frame_idx in range(1, num_frames + 1):
         loss = compute_td_loss(batch_size)
         losses.append(loss.item())
         
-    if frame_idx % 200 == 0:
+    if frame_idx % 1000 == 0:
         CartPole_plot(frame_idx, all_rewards, losses)
-        if frame_idx > 200:
-            os.system('rm img/Double_DQN_CartPole_%s.png' % (frame_idx - 200))
+        if frame_idx > 1000:
+            os.system('rm img/Double_DQN_CartPole_%s.png' % (frame_idx - 1000))
         
     if frame_idx % 100 == 0:
         update_target(current_model, target_model)
@@ -248,7 +248,7 @@ epsilon_by_frame = lambda frame_idx: epsilon_final + (epsilon_start - epsilon_fi
 
 
 ### Training Atari ###
-num_frames = 1000000
+num_frames = 2000000
 batch_size = 32
 gamma = 0.99
 

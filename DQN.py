@@ -68,12 +68,11 @@ class DQN(nn.Module):
     # Epsilon-greedy policy
     def act(self, state, epsilon):
         if random.random() > epsilon:
-            with torch.no_grad():
-                state = Variable(torch.FloatTensor(state).unsqueeze(0)).to(device)
+            state = Variable(torch.FloatTensor(state).unsqueeze(0)).to(device)
             q_value = self.forward(state)
             action = int(q_value.max(1)[1].data[0].cpu().int().numpy())
         else:
-        	# With probability epsilon select a random action
+            # With probability epsilon select a random action
             action = random.randrange(env.action_space.n)
         return action
 
@@ -87,12 +86,11 @@ replay_buffer = ReplayBuffer(1000)
 def compute_td_loss(batch_size):
     state, action, reward, next_state, done = replay_buffer.sample(batch_size)
 
-    state = Variable(torch.FloatTensor(np.float32(state))).to(device)
-    with torch.no_grad():
-        next_state = Variable(torch.FloatTensor(np.float32(next_state))).to(device)
-    action = Variable(torch.LongTensor(action)).to(device)
-    reward = Variable(torch.FloatTensor(reward)).to(device)
-    done = Variable(torch.FloatTensor(done)).to(device)
+    state      = Variable(torch.FloatTensor(np.float32(state))).to(device)
+    next_state = Variable(torch.FloatTensor(np.float32(next_state))).to(device)
+    action     = Variable(torch.LongTensor(action)).to(device)
+    reward     = Variable(torch.FloatTensor(reward)).to(device)
+    done       = Variable(torch.FloatTensor(done)).to(device)
 
     q_values = model(state)
     next_q_values = model(next_state)
@@ -101,7 +99,7 @@ def compute_td_loss(batch_size):
     next_q_value = next_q_values.max(1)[0]
     expected_q_value = reward + gamma * next_q_value * (1 - done)
     
-    loss = (q_value - Variable(expected_q_value.data).to(device)).pow(2).mean()
+    loss = (q_value - expected_q_value.detach()).pow(2).mean()
         
     optimizer.zero_grad()
     loss.backward()
@@ -124,7 +122,7 @@ def CartPole_plot(frame_idx, rewards, losses):
 
 
 ### Training CartPole ###
-num_frames = 10000
+num_frames = 40000
 batch_size = 32
 gamma = 0.99
 
@@ -152,10 +150,10 @@ for frame_idx in range(1, num_frames + 1):
         loss = compute_td_loss(batch_size)
         losses.append(loss.item())
         
-    if frame_idx % 200 == 0:
+    if frame_idx % 1000 == 0:
         CartPole_plot(frame_idx, all_rewards, losses)
-        if frame_idx > 200:
-            os.system('rm img/DQN_CartPole_%s.png' % (frame_idx - 200))
+        if frame_idx > 1000:
+            os.system('rm img/DQN_CartPole_%s.png' % (frame_idx - 1000))
 
 
 ### Atari Environment ###
@@ -199,8 +197,7 @@ class CnnDQN(nn.Module):
     
     def act(self, state, epsilon):
         if random.random() > epsilon:
-            with torch.no_grad():
-                state = Variable(torch.FloatTensor(np.float32(state)).unsqueeze(0)).to(device)
+            state = Variable(torch.FloatTensor(np.float32(state)).unsqueeze(0)).to(device)
             q_value = self.forward(state)
             action = int(q_value.max(1)[1].data[0].cpu().int().numpy())
         else:
@@ -237,7 +234,7 @@ epsilon_by_frame = lambda frame_idx: epsilon_final + (epsilon_start - epsilon_fi
 
 
 ### Training Atari ###
-num_frames = 1400000
+num_frames = 2000000
 batch_size = 32
 gamma = 0.99
 

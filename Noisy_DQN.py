@@ -89,8 +89,7 @@ class NoisyDQN(nn.Module):
         return x
     
     def act(self, state):
-        with torch.no_grad():
-            state = Variable(torch.FloatTensor(state).unsqueeze(0)).to(device)
+        state = Variable(torch.FloatTensor(state).unsqueeze(0)).to(device)
         q_value = self.forward(state)
         action = int(q_value.max(1)[1].data[0].cpu().int().numpy())
         return action
@@ -163,7 +162,7 @@ def CartPole_plot(frame_idx, rewards, losses):
 
 
 ### Training CartPole ###
-num_frames = 10000
+num_frames = 40000
 batch_size = 32
 gamma = 0.99
 
@@ -191,10 +190,10 @@ for frame_idx in range(1, num_frames + 1):
         loss = compute_td_loss(batch_size, beta)
         losses.append(loss.item())
         
-    if frame_idx % 200 == 0:
+    if frame_idx % 1000 == 0:
         CartPole_plot(frame_idx, all_rewards, losses)
-        if frame_idx > 200:
-            os.system('rm img/Noisy_DQN_CartPole_%s.png' % (frame_idx - 200))
+        if frame_idx > 1000:
+            os.system('rm img/Noisy_DQN_CartPole_%s.png' % (frame_idx - 1000))
         
     if frame_idx % 1000 == 0:
         update_target(current_model, target_model)
@@ -246,8 +245,7 @@ class NoisyCnnDQN(nn.Module):
         return self.features(Variable(torch.zeros(1, *self.input_shape))).view(1, -1).size(1)
     
     def act(self, state):
-        with torch.no_grad():
-            state = Variable(torch.FloatTensor(np.float32(state)).unsqueeze(0)).to(device)
+        state = Variable(torch.FloatTensor(np.float32(state)).unsqueeze(0)).to(device)
         q_value = self.forward(state)
         action = int(q_value.max(1)[1].data[0].cpu().int().numpy())
         return action
@@ -280,7 +278,7 @@ replay_buffer = PrioritizedReplayBuffer(10000, alpha=0.6)
 
 
 ### Training Atari ###
-num_frames = 1000000
+num_frames = 2000000
 batch_size = 32
 gamma = 0.99
 

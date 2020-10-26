@@ -105,8 +105,7 @@ class CategoricalDQN(nn.Module):
         return x
     
     def act(self, state):
-        with torch.no_grad():
-            state = Variable(torch.FloatTensor(state).unsqueeze(0)).to(device)
+        state = Variable(torch.FloatTensor(state).unsqueeze(0)).to(device)
         dist = self.forward(state).data.cpu()
         dist = dist * torch.linspace(Vmin, Vmax, num_atoms)
         action = dist.sum(2).max(1)[1].numpy()[0]
@@ -169,12 +168,11 @@ update_target(current_model, target_model)
 def compute_td_loss(batch_size):
     state, action, reward, next_state, done = replay_buffer.sample(batch_size) 
 
-    state = Variable(torch.FloatTensor(np.float32(state))).to(device)
-    with torch.no_grad():
-        next_state = Variable(torch.FloatTensor(np.float32(next_state))).to(device)
-    action = Variable(torch.LongTensor(action)).to(device)
-    reward = torch.FloatTensor(reward).to(device)
-    done = torch.FloatTensor(np.float32(done)).to(device)
+    state      = Variable(torch.FloatTensor(np.float32(state))).to(device)
+    next_state = Variable(torch.FloatTensor(np.float32(next_state))).to(device)
+    action     = Variable(torch.LongTensor(action)).to(device)
+    reward     = torch.FloatTensor(reward).to(device)
+    done       = torch.FloatTensor(np.float32(done)).to(device)
 
     proj_dist = projection_distribution(next_state, reward, done)
     
@@ -208,7 +206,7 @@ def CartPole_plot(frame_idx, rewards, losses):
 
 
 ### Training CartPole ###
-num_frames = 10000
+num_frames = 20000
 batch_size = 32
 gamma = 0.99
 
@@ -235,10 +233,10 @@ for frame_idx in range(1, num_frames + 1):
         loss = compute_td_loss(batch_size)
         losses.append(loss.item())
         
-    if frame_idx % 200 == 0:
+    if frame_idx % 1000 == 0:
         CartPole_plot(frame_idx, all_rewards, losses)
-        if frame_idx > 200:
-            os.system('rm img/C51_CartPole_%s.png' % (frame_idx - 200))
+        if frame_idx > 1000:
+            os.system('rm img/C51_CartPole_%s.png' % (frame_idx - 1000))
         
     if frame_idx % 100 == 0:
         update_target(current_model, target_model)
@@ -294,8 +292,7 @@ class CategoricalCnnDQN(nn.Module):
         return self.features(Variable(torch.zeros(1, *self.input_shape))).view(1, -1).size(1)
     
     def act(self, state):
-        with torch.no_grad():
-            state = Variable(torch.FloatTensor(np.float32(state)).unsqueeze(0)).to(device)
+        state = Variable(torch.FloatTensor(np.float32(state)).unsqueeze(0)).to(device)
         dist = self.forward(state).data.cpu()
         dist = dist * torch.linspace(Vmin, Vmax, num_atoms)
         action = dist.sum(2).max(1)[1].numpy()[0]

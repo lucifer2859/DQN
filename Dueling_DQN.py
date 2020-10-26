@@ -79,8 +79,7 @@ class DuelingDQN(nn.Module):
     
     def act(self, state, epsilon):
         if random.random() > epsilon:
-            with torch.no_grad():
-                state = Variable(torch.FloatTensor(state).unsqueeze(0)).to(device)
+            state = Variable(torch.FloatTensor(state).unsqueeze(0)).to(device)
             q_value = self.forward(state)
             action = int(q_value.max(1)[1].data[0].cpu().int().numpy())
         else:
@@ -140,7 +139,7 @@ def CartPole_plot(frame_idx, rewards, losses):
 
 
 ### Training CartPole ###
-num_frames = 10000
+num_frames = 40000
 batch_size = 32
 gamma = 0.99
 
@@ -168,10 +167,10 @@ for frame_idx in range(1, num_frames + 1):
         loss = compute_td_loss(batch_size)
         losses.append(loss.item())
         
-    if frame_idx % 200 == 0:
+    if frame_idx % 1000 == 0:
         CartPole_plot(frame_idx, all_rewards, losses)
-        if frame_idx > 200:
-            os.system('rm img/Dueling_DQN_CartPole_%s.png' % (frame_idx - 200))
+        if frame_idx > 1000:
+            os.system('rm img/Dueling_DQN_CartPole_%s.png' % (frame_idx - 1000))
         
     if frame_idx % 100 == 0:
         update_target(current_model, target_model)
@@ -225,8 +224,7 @@ class DuelingCnnDQN(nn.Module):
     
     def act(self, state, epsilon):
         if random.random() > epsilon:
-            with torch.no_grad():
-                state = Variable(torch.FloatTensor(np.float32(state)).unsqueeze(0)).to(device)
+            state = Variable(torch.FloatTensor(np.float32(state)).unsqueeze(0)).to(device)
             q_value = self.forward(state)
             action = int(q_value.max(1)[1].data[0].cpu().int().numpy())
         else:
@@ -258,7 +256,7 @@ update_target(current_model, target_model)
 
 
 ### Training Atari ###
-num_frames = 1000000
+num_frames = 2000000
 batch_size = 32
 gamma = 0.99
 
